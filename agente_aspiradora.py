@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import numpy as np
 import random
 
@@ -15,32 +14,25 @@ class VisualEnvironment3x3:
             random.randint(0, 2)
         ]
 
-        plt.ion()
-        self.fig = plt.figure(figsize=(12, 6))
-        gs = gridspec.GridSpec(
-            1, 2, width_ratios=[1, 1], wspace=0.3
-        )
-        self.ax = self.fig.add_subplot(gs[0])
-        self.ax_metrics = self.fig.add_subplot(gs[1])
+        # Metricas de rendimiento 
+        self.initial_dirty = int(np.sum(self.grid))
+        self.cleaned_cells = 0
+        self.score = 0
+        self.cost_per_move = -1
+        self.reward_per_clean = 10
 
-    def render(
-        self, step, action, visited,
-        metricas=None
-    ):
-        # --- Panel izquierdo: cuadricula ---
+        plt.ion()
+        self.fig, self.ax = plt.subplots(figsize=(6, 6))
+
+    def render(self, step, action, visited):
         self.ax.clear()
 
-        self.ax.imshow(
+        self.ax.matshow(
             self.grid,
             cmap="Blues",
             vmin=0,
-            vmax=1.5,
-            aspect="equal"
+            vmax=1.5
         )
-
-        # Ajustar limites para que las celdas queden centradas
-        self.ax.set_xlim(-0.5, 2.5)
-        self.ax.set_ylim(2.5, -0.5)
 
         # Dibujar la aspiradora
         self.ax.plot(
@@ -73,10 +65,8 @@ class VisualEnvironment3x3:
                 )
 
         self.ax.set_title(
-            f"Paso: {step} | Accion: {action}",
-            pad=20,
-            fontsize=13,
-            weight="bold"
+            f"Paso: {step} | Accion: {action} | Puntaje: {self.score}",
+            pad=20
         )
 
         self.ax.set_xticks(range(3))
@@ -95,72 +85,6 @@ class VisualEnvironment3x3:
             linewidth=2
         )
 
-        # --- Panel derecho: metricas ---
-        self.ax_metrics.clear()
-        self.ax_metrics.axis("off")
-
-        self.ax_metrics.set_title(
-            "Metricas de Rendimiento",
-            pad=20,
-            fontsize=13,
-            weight="bold"
-        )
-
-        if metricas is not None:
-            lineas = metricas
-        else:
-            lineas = ["Esperando inicio..."]
-
-        # Posicion vertical inicial y espaciado
-        y_start = 0.92
-        y_step = 0.065
-
-        for idx, linea in enumerate(lineas):
-            y_pos = y_start - idx * y_step
-
-            # Detectar lineas de encabezado (empiezan con ─)
-            if linea.startswith("─"):
-                self.ax_metrics.text(
-                    0.05, y_pos, linea,
-                    transform=self.ax_metrics.transAxes,
-                    fontsize=8,
-                    color="#888888",
-                    fontfamily="monospace",
-                    verticalalignment="top"
-                )
-            # Detectar lineas con valor (contienen ":")
-            elif ":" in linea:
-                partes = linea.split(":", 1)
-                etiqueta = partes[0] + ":"
-                valor = partes[1]
-
-                self.ax_metrics.text(
-                    0.05, y_pos, etiqueta,
-                    transform=self.ax_metrics.transAxes,
-                    fontsize=9,
-                    color="#333333",
-                    fontfamily="monospace",
-                    verticalalignment="top"
-                )
-                self.ax_metrics.text(
-                    0.65, y_pos, valor.strip(),
-                    transform=self.ax_metrics.transAxes,
-                    fontsize=9,
-                    color="#0066cc",
-                    weight="bold",
-                    fontfamily="monospace",
-                    verticalalignment="top"
-                )
-            else:
-                self.ax_metrics.text(
-                    0.05, y_pos, linea,
-                    transform=self.ax_metrics.transAxes,
-                    fontsize=9,
-                    color="#333333",
-                    fontfamily="monospace",
-                    verticalalignment="top"
-                )
-
         plt.draw()
         plt.pause(0.8)
 
@@ -175,8 +99,14 @@ class VisualEnvironment3x3:
     def execute_action(self, action):
         fila, columna = self.agent_pos
 
+        # Toda accion incurre en un costo energetico (-1)
+        self.score += self.cost_per_move
+
         if action == "Suck":
-            self.grid[fila, columna] = 0
+            if self.grid[fila, columna] == 1:
+                self.grid[fila, columna] = 0
+                self.cleaned_cells += 1
+                self.score += self.reward_per_clean  # Recompensa (+10)
 
         elif action == "Up" and fila > 0:
             self.agent_pos[0] -= 1
@@ -195,29 +125,33 @@ class VisualEnvironment3x3:
 
 
 class VacuumAgentWithMemory:
-    def __init__(self):
-        # Memoria de posiciones visitadas
+    def __init__(self, total_casillas=9):
+        # Memoria de todas las posiciones visitadas
         self.visited = set()
 
-        # Camino actual para poder retroceder
+        # Camino actual: permite retroceder
         self.path = []
+
+        # Total de casillas para verificar cobertura completa
+        self.total_casillas = total_casillas
 
     def act(self, percept):
         pos, status = percept
+
         pos = tuple(pos)
 
-        # Registrar posicion inicial
         if not self.path:
             self.path.append(pos)
             self.visited.add(pos)
 
-        # Limpiar si la casilla esta sucia
         if status == 1:
             return "Suck"
 
+        if len(self.visited) >= self.total_casillas:
+            return "Stop"
+
         fila, columna = pos
 
-        # Posiciones vecinas
         vecinos = {
             "Up": (fila - 1, columna),
             "Down": (fila + 1, columna),
@@ -225,7 +159,6 @@ class VacuumAgentWithMemory:
             "Right": (fila, columna + 1)
         }
 
-        # Filtrar movimientos validos
         movimientos_validos = {
             accion: destino
             for accion, destino in vecinos.items()
@@ -233,187 +166,61 @@ class VacuumAgentWithMemory:
             and 0 <= destino[1] < 3
         }
 
-        # Buscar casillas nuevas
+        # Buscar vecinos 
         movimientos_nuevos = [
             (accion, destino)
             for accion, destino in movimientos_validos.items()
             if destino not in self.visited
         ]
 
-        # Prioridad 1: explorar casilla nueva
+        # Prioridad 1
         if movimientos_nuevos:
-            accion, destino = random.choice(
-                movimientos_nuevos
-            )
+            accion, destino = random.choice(movimientos_nuevos)
 
             self.visited.add(destino)
             self.path.append(destino)
 
             return accion
 
-        # Prioridad 2: retroceder por el camino
+        # Prioridad 2
         if len(self.path) > 1:
             self.path.pop()
             anterior = self.path[-1]
 
+            # Encontrar la accion para regresar
             for accion, destino in movimientos_validos.items():
                 if destino == anterior:
                     return accion
 
-        # No quedan posiciones nuevas
+        # No quedan posiciones nuevas por explorar
         return "Stop"
-
-
-def calcular_metricas(
-    env,
-    agent,
-    suciedad_inicial,
-    movimientos,
-    limpiezas
-):
-    """Calcula las metricas y devuelve una lista de
-    lineas de texto para mostrar en el panel."""
-    total_casillas = env.grid.size
-
-    casillas_visitadas = len(agent.visited)
-    suciedad_restante = int(np.sum(env.grid))
-    casillas_limpias = total_casillas - suciedad_restante
-
-    # 1. Porcentaje de cobertura
-    cobertura = (
-        casillas_visitadas / total_casillas
-    ) * 100
-
-    # 2. Porcentaje de casillas limpias
-    limpieza_entorno = (
-        casillas_limpias / total_casillas
-    ) * 100
-
-    # 3. Porcentaje de suciedad inicial eliminada
-    if suciedad_inicial > 0:
-        suciedad_eliminada = (
-            (suciedad_inicial - suciedad_restante)
-            / suciedad_inicial
-        ) * 100
-    else:
-        suciedad_eliminada = 100.0
-
-    lineas = []
-
-    lineas.append("─── Cobertura ───")
-    lineas.append(
-        f"Visitadas: {casillas_visitadas}/{total_casillas}"
-    )
-    lineas.append(f"Cobertura: {cobertura:.1f}%")
-
-    lineas.append("")
-    lineas.append("─── Limpieza ───")
-    lineas.append(
-        f"Casillas limpias: {casillas_limpias}/{total_casillas}"
-    )
-    lineas.append(
-        f"Limpieza entorno: {limpieza_entorno:.1f}%"
-    )
-
-    lineas.append("")
-    lineas.append("─── Suciedad ───")
-    lineas.append(
-        f"Inicial: {suciedad_inicial}"
-    )
-    lineas.append(
-        f"Restante: {suciedad_restante}"
-    )
-    lineas.append(
-        f"Eliminada: {suciedad_eliminada:.1f}%"
-    )
-
-    lineas.append("")
-    lineas.append("─── Acciones ───")
-    lineas.append(f"Movimientos: {movimientos}")
-    lineas.append(f"Limpiezas: {limpiezas}")
-
-    # 4. Eficiencia del recorrido
-    if casillas_visitadas == total_casillas:
-        minimo_teorico = total_casillas - 1
-
-        lineas.append("")
-        lineas.append("─── Eficiencia ───")
-
-        if movimientos > 0:
-            eficiencia = (
-                minimo_teorico / movimientos
-            ) * 100
-
-            lineas.append(
-                f"Eficiencia: {eficiencia:.1f}%"
-            )
-        else:
-            lineas.append("Eficiencia: N/A")
-
-        lineas.append(
-            f"Min. teorico: {minimo_teorico} mov."
-        )
-
-    return lineas
 
 
 if __name__ == "__main__":
     env = VisualEnvironment3x3()
-    agent = VacuumAgentWithMemory()
+    agent = VacuumAgentWithMemory(total_casillas=9)
 
-    # Guardar las condiciones iniciales
-    suciedad_inicial = int(np.sum(env.grid))
+    env.render(0, "Inicio", agent.visited)
 
-    movimientos = 0
-    limpiezas = 0
-
-    # Metricas iniciales
-    metricas = calcular_metricas(
-        env, agent, suciedad_inicial,
-        movimientos, limpiezas
-    )
-    env.render(0, "Inicio", agent.visited, metricas)
-
+    total_pasos = 0
     for paso in range(1, 101):
+        total_pasos = paso
         percept = env.get_percept()
         action = agent.act(percept)
 
         if action == "Stop":
-            # Renderizar estado final antes de salir
-            metricas = calcular_metricas(
-                env, agent, suciedad_inicial,
-                movimientos, limpiezas
-            )
-            env.render(
-                paso, "Stop", agent.visited, metricas
-            )
+            env.render(paso, "Stop", agent.visited)
+            print("Exploracion terminada.")
             break
 
-        # Ejecutar la accion
         env.execute_action(action)
+        env.render(paso, action, agent.visited)
 
-        # Contabilizar movimientos y limpiezas
-        if action in ["Up", "Down", "Left", "Right"]:
-            movimientos += 1
-
-        elif action == "Suck":
-            limpiezas += 1
-
-        # Registrar la posicion actual
-        agent.visited.add(tuple(env.agent_pos))
-
-        # Calcular metricas actualizadas
-        metricas = calcular_metricas(
-            env, agent, suciedad_inicial,
-            movimientos, limpiezas
-        )
-
-        # Mostrar la animacion con metricas
-        env.render(paso, action, agent.visited, metricas)
-
-        # Si todo esta limpio, detener la simulacion
-        if env.is_completely_clean():
-            break
+    print("Posiciones visitadas:", agent.visited)
+    print("Total de posiciones visitadas:", len(agent.visited))
+    print("Pasos totales:", total_pasos)
+    print("Casillas limpiadas:", env.cleaned_cells)
+    print("Puntaje final:", env.score)
 
     plt.ioff()
     plt.show()
